@@ -59,9 +59,10 @@ public:
         return result;
     }
 
-    // TODO (your turn): block until the queue is empty AND no task is running.
+    // Block until the queue is empty AND no task is currently running.
     void wait_idle() {
-        throw std::runtime_error("ThreadPool::wait_idle not implemented");
+        std::unique_lock<std::mutex> lock(mutex_);
+        idle_cv_.wait(lock, [this] { return tasks_.empty() && active_ == 0; });
     }
 
     std::size_t thread_count() const noexcept { return workers_.size(); }
@@ -76,16 +77,24 @@ private:
                 if (tasks_.empty()) return;   // stopping_ is set and nothing left to drain
                 job = std::move(tasks_.front());
                 tasks_.pop();
+                ++active_;                    // counted as running before the lock is released
             }
             job();                            // run with the mutex released
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                --active_;
+                if (tasks_.empty() && active_ == 0) idle_cv_.notify_all();
+            }
         }
     }
 
     std::vector<std::thread> workers_;
     std::queue<std::function<void()>> tasks_;
     std::mutex mutex_;
-    std::condition_variable cv_;
+    std::condition_variable cv_;       // wakes workers
+    std::condition_variable idle_cv_;  // wakes wait_idle() callers
     bool stopping_ = false;
+    std::size_t active_ = 0;           // tasks currently executing
 };
 
 }  // namespace tp
