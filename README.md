@@ -2,8 +2,7 @@
 
 A fixed-size C++17 thread pool with futures, built from scratch (mutex + condition variable), tested under ThreadSanitizer and benchmarked against a serial loop and `std::async`.
 
-> Status: scaffold. The API, tests and benchmark are done; the concurrency core in
-> `include/threadpool/thread_pool.hpp` is yours to write. Replace this note once it passes.
+> Status: complete. 9/9 tests pass, and 100 consecutive ThreadSanitizer runs report no data races.
 
 ## API
 
@@ -40,13 +39,36 @@ cmake -S . -B build-asan -DSANITIZE=address && cmake --build build-asan -j && ./
 Columns: `workload, impl, threads, tasks, seconds, tasks_per_sec`.
 `tiny` measures queue/lock overhead, `cpu` (~50 us tasks) measures scaling.
 
-Results (fill in from your machine; include CPU model and core count):
+Machine: Intel Core i5-8265U (4 cores / 8 threads, 1.6 GHz base), Ubuntu, GCC 15.2, Release build, best of 3 runs.
 
-| workload | impl        | threads | tasks/sec |
-|----------|-------------|---------|-----------|
-| cpu      | serial      | 1       | TODO      |
-| cpu      | std::async  | -       | TODO      |
-| cpu      | thread_pool | 4       | TODO      |
+**CPU-bound tasks (about 30 us each)**
+
+| impl        | threads | tasks/sec | vs 1 thread |
+|-------------|---------|-----------|-------------|
+| serial      | 1       | 31,569    | -           |
+| std::async  | -       | 37,738    | -           |
+| thread_pool | 1       | 28,961    | 1.0x        |
+| thread_pool | 2       | 57,045    | 1.97x       |
+| thread_pool | 4       | 96,589    | 3.34x       |
+| thread_pool | 8       | 169,988   | 5.87x       |
+
+(`std::async` ran 4,000 tasks instead of 20,000, since spawning a thread per task is slow.)
+
+**Tiny tasks (measures pool overhead)**
+
+| threads | tasks/sec |
+|---------|-----------|
+| 1       | 838,023   |
+| 2       | 853,526   |
+| 4       | 681,844   |
+| 8       | 453,894   |
+
+**What the numbers show**
+- CPU-bound work scales almost linearly up to the 4 physical cores. The 5.9x at 8 threads
+  suggests hyperthreading fills pipeline gaps in this dependent-chain workload (hypothesis, not measured).
+- The pool costs about 1.2 us per task with one thread, so tasks should be well above 10 us to pay off.
+- With tiny tasks, adding threads makes throughput worse: all workers contend on one mutex and
+  condition variable. This is the bottleneck that per-worker queues with work stealing would address.
 
 ## Milestones
 
